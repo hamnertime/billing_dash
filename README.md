@@ -1,122 +1,100 @@
-# **Billing Dashboard**
+# Billing Dashboard
 
-This project provides a web-based dashboard for managing client billing information by integrating data from Freshservice (for company and user data) and Datto RMM (for asset data). It calculates estimated monthly billing based on configurable plans and allows for the synchronization of data between these platforms.
+This project provides a secure, web-based dashboard for managing client billing information by integrating data from Freshservice and Datto RMM. It uses a locally encrypted SQLite database to securely store all synchronized data and API credentials, and all web traffic is encrypted with SSL.
 
-## **Features**
+## Features
 
-* **Freshservice Integration**:  
-  * Pulls company (department) and user (requester) data.  
-  * Assigns unique account numbers to Freshservice companies if they don't already have one.  
-* **Datto RMM Integration**:  
-  * Pulls site and device (asset) data.  
-  * Pushes Freshservice account numbers to corresponding Datto RMM sites as custom variables.  
-* **Billing Calculation**: Calculates estimated monthly billing for each client based on:  
-  * Base price.  
-  * Per-user cost.  
-  * Per-server cost.  
-  * Per-workstation cost.  
-  * Configurable billing models (e.g., "Per User", "Per Device").  
-* **Web Dashboard**: A Flask-based web interface to:  
-  * View client billing summaries.  
-  * Configure billing plans and pricing.  
-  * Manually trigger data synchronization scripts.  
-* **SQLite Database**: Stores synchronized data and billing configurations locally.
+- **Secure Credential Storage**: All API keys and sensitive data are stored in a fully-encrypted SQLCipher database file.
+- **Web-Based UI Unlock**: The master password for the database is entered through a secure login page in the web UI, not stored in environment variables.
+- **SSL Encryption**: All web traffic between your browser and the server is encrypted using a self-signed SSL certificate.
+- **Freshservice Integration**: Pulls company, user, and ticket time-tracking data.
+- **Datto RMM Integration**: Pulls site and device data.
+- **ID Synchronization**: Assigns unique account numbers in Freshservice and pushes them to Datto RMM sites.
+- **Billing Calculation**: Calculates estimated monthly billing based on configurable plans.
+- **Web Dashboard**: A Flask-based web interface to view billing summaries, configure plans, and trigger data syncs.
+- **Client Detail View**: Click on any client on the main dashboard to see a detailed breakdown of their users, assets, and recent billable hours.
 
-## **Prerequisites**
+## Prerequisites
 
 Before you begin, ensure you have the following installed:
 
-* **Python 3.x**: The project is written in Python.  
-* **pip**: Python package installer (usually comes with Python).  
-* **Freshservice API Key**: An API key from your Freshservice instance with sufficient permissions to read companies/departments, requesters, and update company custom fields.  
-* **Datto RMM API Credentials**: API endpoint, public key, and secret key for your Datto RMM instance with permissions to read sites, devices, and manage site variables.
+- **Python 3.x**: The project is written in Python.
+- **pip**: Python package installer.
+- **Git**: For cloning the repository.
+- **Freshservice API Key**: An API key from your Freshservice instance.
+- **Datto RMM API Credentials**: API endpoint, public key, and secret key for your Datto RMM instance.
 
-## **Setup**
+## Setup
 
-Follow these steps to get the project up and running:
+Follow these steps to get the project up and running.
 
-### **1\. Clone the Repository**
+### 1. Clone the Repository
 
-git clone https://github.com/ruapotato/billing\_dash.git  
-cd billing\_dash
+```bash
+git clone https://github.com/ruapotato/billing_dash.git
+cd billing_dash
+```
 
-### **2\. Create Credential Files**
+### 2. Install Python Dependencies
 
-For security, API keys and tokens are read from external files that are excluded from version control (.gitignore prevents them from being committed).
+This project requires Flask, Requests, and SQLCipher support. The sqlcipher3-wheels package provides pre-compiled binaries for a pain-free installation on Windows, macOS, and Linux. The cryptography package is used to generate the SSL certificate.
 
-* token.txt (for Freshservice):  
-  Create a file named token.txt in the root directory of the project. This file should contain only your Freshservice API key.  
-  YOUR\_FRESHSERVICE\_API\_KEY\_HERE
+```bash
+pip install Flask requests sqlcipher3-wheels cryptography
+```
 
-* datto\_token.txt (for Datto RMM):  
-  Create a file named datto\_token.txt in the root directory of the project. This file should contain three lines: your Datto RMM API endpoint, public key, and secret key.  
-  YOUR\_DATTO\_RMM\_API\_ENDPOINT  
-  YOUR\_DATTO\_RMM\_PUBLIC\_KEY  
-  YOUR\_DATTO\_RMM\_SECRET\_KEY
+### 3. Generate SSL Certificate
 
-  **Example datto\_token.txt content:**  
-  https://api.rmm.datto.com  
-  your\_public\_key\_string  
-  your\_secret\_key\_string
+This application uses SSL to encrypt all web traffic. Run the provided Python script to generate a self-signed certificate.
 
-### **3\. Install Python Dependencies**
+```bash
+python generate_cert.py
+```
 
-Install the required Python libraries using pip:
+This will create two files: `cert.pem` and `key.pem`.
 
-`pip install Flask requests`
+### 4. Initialize the Encrypted Database
 
-### **4\. Initialize the Database**
+The first time you set up the project, you must run the initialization script. This script will create the encrypted `brainhair.db` file and prompt you to enter a master password and all your API keys.
 
-The project uses an SQLite database (brainhair.db). You need to create the database schema before running the application.
+```bash
+python init_db.py
+```
 
-`python init\_db.py`
+You will be asked for:
 
-If you ever need to reset the database, delete the brainhair.db file and run init\_db.py again.
+- A master password for the database. You must remember this password.
+- Your Freshservice API Key.
+- Your Datto RMM API Endpoint, Public Key, and Secret Key.
 
-## **Usage**
+These credentials will be stored securely inside the encrypted database.
 
-### **1\. Run the Flask Application**
+**Important**: If you ever need to reset the database or change your API keys, you must delete the `brainhair.db` file and run `python init_db.py` again.
 
-Start the web server:
+## Usage
 
-`python main.py`
+### 1. Run the Flask Application
 
-The application will typically run on http://127.0.0.1:5002/. Open this URL in your web browser.
+Start the web server with the following command:
 
-### **2\. Navigate the Dashboard**
+```bash
+python main.py
+```
 
-* **Home Page (/)**: Displays the billing dashboard with client names, contract types, device counts, user counts, and calculated total bills.  
-* **Settings Page (/settings)**: Allows you to configure the billing plans. You can define base\_price, per\_user\_cost, per\_server\_cost, and per\_workstation\_cost for each unique contract\_type and billing\_plan combination found in your Freshservice companies. You can also select how each plan is billed\_by (e.g., 'Per User', 'Per Device').
+The application will be running on `https://0.0.0.0:5002/`.
 
-### **3\. Synchronize Data**
+### 2. Access the Web UI
 
-From the settings page, you can trigger the synchronization scripts:
+Open a web browser and navigate to `https://localhost:5002`.
 
-* **Sync Freshservice**: Runs pull\_freshservice.py to fetch companies and users from Freshservice and populate the local database.  
-* **Sync Datto RMM**: Runs pull\_datto.py to fetch sites and devices from Datto RMM and populate the local database.  
-* **Set Freshservice Account IDs**: Runs set\_account\_numbers.py to assign unique account numbers to Freshservice companies that don't have one.  
-* **Push IDs to Datto**: Runs push\_account\_nums\_to\_datto.py to take the Freshservice account numbers and push them as custom variables to the corresponding Datto RMM sites.
+- **Browser Warning**: Your browser will display a security warning (e.g., "Your connection is not private"). This is expected because we are using a self-signed certificate. Click "Advanced" and then "Proceed to localhost (unsafe)" to continue.
+- **Login**: You will be greeted by a login page. Enter the master password you created during initialization to unlock the database.
 
-It's recommended to run the sync scripts in a logical order, for example:
+### 3. Synchronize Data
 
-1. Set Freshservice Account IDs (if needed)  
-2. Sync Freshservice  
-3. Sync Datto RMM  
-4. Push IDs to Datto
+From the Settings Page (`/settings`), you can trigger the synchronization scripts. It's recommended to run them in this order:
 
-## **Project Structure**
-
-* main.py: The Flask application, handles web routes, database interactions for the dashboard, and script execution.  
-* init\_db.py: Initializes the SQLite database schema.  
-* pull\_freshservice.py: Fetches company and user data from Freshservice API and stores it in the database.  
-* pull\_datto.py: Fetches site and device data from Datto RMM API and stores it in the database.  
-* set\_account\_numbers.py: Assigns unique account numbers to Freshservice companies.  
-* push\_account\_nums\_to\_datto.py: Pushes Freshservice account numbers to Datto RMM site variables.  
-* token.txt: (User-created) Stores Freshservice API key.  
-* datto\_token.txt: (User-created) Stores Datto RMM API credentials.  
-* brainhair.db: (Generated) The SQLite database file.  
-* .gitignore: Specifies files to be ignored by Git (e.g., \*.db, \*.txt for credentials).  
-* templates/: Contains HTML templates for the Flask application.  
-  * billing.html: The main dashboard view.  
-  * settings.html: The billing plan configuration and script execution view.
-
+1. **Assign Missing IDs**: Runs `set_account_numbers.py`.
+2. **Sync from Freshservice**: Runs `pull_freshservice.py`. This is the most intensive script as it now fetches ticket time entries.
+3. **Push IDs to Datto**: Runs `push_account_nums_to_datto.py`.
+4. **Sync from Datto RMM**: Runs `pull_datto.py`.

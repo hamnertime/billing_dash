@@ -5,6 +5,12 @@ import os
 import sys
 import time
 
+try:
+    from sqlcipher3 import dbapi2 as sqlite3
+except ImportError:
+    print("Error: sqlcipher3-wheels is not installed. Please install it using: pip install sqlcipher3-wheels", file=sys.stderr)
+    sys.exit(1)
+
 # --- Static & Rule-Based Mapping Configuration ---
 DATTO_TO_FRESHSERVICE_MAP = {
     "BrightPath Business Solutions": "Brightpath Business Solutions",
@@ -35,23 +41,53 @@ REDBARN_KEYWORD = "Redbarn"
 REDBARN_FRESHSERVICE_TARGET = "Redbarn Cannabis"
 
 # --- Other Configuration ---
-FRESHSERVICE_TOKEN_FILE = "./token.txt"
-DATTO_TOKEN_FILE = "./datto_token.txt"
+DB_FILE = "brainhair.db"
 FRESHSERVICE_DOMAIN = "integotecllc.freshservice.com"
 ACCOUNT_NUMBER_FIELD = "account_number"
 DATTO_VARIABLE_NAME = "AccountNumber"
 
-# --- API Functions ---
-def read_freshservice_key():
-    try:
-        with open(FRESHSERVICE_TOKEN_FILE, 'r') as f: return f.read().strip()
-    except FileNotFoundError:
-        print(f"Error: Freshservice token file '{FRESHSERVICE_TOKEN_FILE}' not found.", file=sys.stderr)
-        sys.exit(1)
+# --- Utility Functions ---
+def get_db_connection(db_path, password):
+    """Establishes a connection to the encrypted database."""
+    if not password:
+        raise ValueError("A database password is required.")
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+    cur.execute(f"PRAGMA key = '{password}';")
+    return con
 
-def get_freshservice_companies():
+def get_freshservice_api_key(db_password):
+    """Reads the Freshservice API key from the encrypted database."""
+    try:
+        con = get_db_connection(DB_FILE, db_password)
+        cur = con.cursor()
+        cur.execute("SELECT api_key FROM api_keys WHERE service = 'freshservice'")
+        creds = cur.fetchone()
+        con.close()
+        if not creds:
+            raise ValueError("Freshservice credentials not found in the database.")
+        return creds[0]
+    except sqlite3.Error as e:
+        sys.exit(f"Database error while fetching Freshservice credentials: {e}. Is the password correct?")
+
+def get_datto_creds_from_db(db_password):
+    """Reads Datto RMM credentials from the encrypted database."""
+    try:
+        con = get_db_connection(DB_FILE, db_password)
+        cur = con.cursor()
+        cur.execute("SELECT api_endpoint, api_key, api_secret FROM api_keys WHERE service = 'datto'")
+        creds = cur.fetchone()
+        con.close()
+        if not creds:
+            raise ValueError("Datto credentials not found in the database.")
+        return creds[0], creds[1], creds[2] # endpoint, key, secret
+    except sqlite3.Error as e:
+        sys.exit(f"Database error while fetching Datto credentials: {e}. Is the password correct?")
+
+
+# --- API Functions ---
+def get_freshservice_companies(api_key):
     print("Fetching companies from Freshservice...")
-    api_key = read_freshservice_key()
     auth_str = f"{api_key}:X"
     encoded_auth = base64.b64encode(auth_str.encode()).decode()
     headers = {"Content-Type": "application/json", "Authorization": f"Basic {encoded_auth}"}
@@ -71,15 +107,6 @@ def get_freshservice_companies():
             return None
     print(f" Found {len(all_companies)} companies in Freshservice.")
     return all_companies
-
-def read_datto_creds():
-    try:
-        with open(DATTO_TOKEN_FILE, 'r') as f:
-            lines = [line.strip() for line in f.readlines()]
-            return lines[0], lines[1], lines[2]
-    except FileNotFoundError:
-        print(f"Error: Datto token file '{DATTO_TOKEN_FILE}' not found.", file=sys.stderr)
-        sys.exit(1)
 
 def get_datto_access_token(api_endpoint, api_key, api_secret_key):
     token_url = f"{api_endpoint}/auth/oauth/token"
@@ -113,7 +140,6 @@ def check_datto_variable_exists(api_endpoint, access_token, site_uid, variable_n
     headers = {'Authorization': f'Bearer {access_token}'}
     try:
         response = requests.get(request_url, headers=headers, timeout=30)
-        # A 404 here can be normal if the site has NO variables yet.
         if response.status_code == 404:
             return False
         response.raise_for_status()
@@ -124,7 +150,7 @@ def check_datto_variable_exists(api_endpoint, access_token, site_uid, variable_n
         return False # The variable does not exist
     except requests.exceptions.RequestException as e:
         print(f"   -> ⚠️  Warning: Could not check for existing variables on site {site_uid}: {e}", file=sys.stderr)
-        return True # Assume it exists to be safe and prevent accidental overwrite
+        return True
 
 def update_datto_site_variable(api_endpoint, access_token, site_uid, variable_name, variable_value):
     """Pushes a variable value to a specific Datto RMM site."""
@@ -146,8 +172,14 @@ if __name__ == "__main__":
     print(" Datto RMM & Freshservice Account Number Pusher")
     print("===================================================")
 
-    fs_companies = get_freshservice_companies()
-    datto_endpoint, datto_api_key, datto_secret_key = read_datto_creds()
+    DB_MASTER_PASSWORD = os.environ.get('DB_MASTER_PASSWORD')
+    if not DB_MASTER_PASSWORD:
+        sys.exit("Error: The DB_MASTER_PASSWORD environment variable must be set.")
+
+    fs_api_key = get_freshservice_api_key(DB_MASTER_PASSWORD)
+    datto_endpoint, datto_api_key, datto_secret_key = get_datto_creds_from_db(DB_MASTER_PASSWORD)
+
+    fs_companies = get_freshservice_companies(fs_api_key)
     datto_token = get_datto_access_token(datto_endpoint, datto_api_key, datto_secret_key)
 
     if not fs_companies or not datto_token:
@@ -194,8 +226,6 @@ if __name__ == "__main__":
 
         print(f"-> Processing site '{datto_name}'...")
 
-        # --- THE FIX IS HERE ---
-        # Check if the variable is already set before trying to update it.
         if check_datto_variable_exists(datto_endpoint, datto_token, datto_uid, DATTO_VARIABLE_NAME):
             print("   ->   Skipping: 'AccountNumber' variable already exists.")
             already_set_count += 1

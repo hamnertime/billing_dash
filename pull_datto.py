@@ -1,26 +1,44 @@
 import requests
-import base64
-import json
 import os
 import sys
-import sqlite3
 from datetime import datetime, timezone
 
+try:
+    from sqlcipher3 import dbapi2 as sqlite3
+except ImportError:
+    print("Error: sqlcipher3-wheels is not installed. Please install it using: pip install sqlcipher3-wheels", file=sys.stderr)
+    sys.exit(1)
+
 # --- Configuration ---
-TOKEN_FILE = "./datto_token.txt"
 DB_FILE = "brainhair.db"
 DATTO_VARIABLE_NAME = "AccountNumber"
 
-# --- API Functions ---
-def read_datto_creds():
-    try:
-        with open(TOKEN_FILE, 'r') as f:
-            lines = [line.strip() for line in f.readlines()]
-            return lines[0], lines[1], lines[2]
-    except FileNotFoundError:
-        print(f"Error: Datto token file '{TOKEN_FILE}' not found.", file=sys.stderr)
-        sys.exit(1)
+# --- Utility Functions ---
+def get_db_connection(db_path, password):
+    """Establishes a connection to the encrypted database."""
+    if not password:
+        raise ValueError("A database password is required.")
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+    cur.execute(f"PRAGMA key = '{password}';")
+    return con, cur
 
+def get_datto_creds_from_db(db_password):
+    """Reads Datto RMM credentials from the encrypted database."""
+    try:
+        con, cur = get_db_connection(DB_FILE, db_password)
+        cur.execute("SELECT api_endpoint, api_key, api_secret FROM api_keys WHERE service = 'datto'")
+        creds = cur.fetchone()
+        con.close()
+        if not creds:
+            raise ValueError("Datto credentials not found in the database.")
+        return creds[0], creds[1], creds[2] # endpoint, key, secret
+    except sqlite3.Error as e:
+        # This will fail if the password is wrong
+        sys.exit(f"Database error while fetching credentials: {e}. Is the password correct?")
+
+
+# --- API Functions ---
 def get_datto_access_token(api_endpoint, api_key, api_secret_key):
     token_url = f"{api_endpoint}/auth/oauth/token"
     payload = {'grant_type': 'password', 'username': api_key, 'password': api_secret_key}
@@ -67,11 +85,10 @@ def get_site_variable(api_endpoint, access_token, site_uid, variable_name):
         return None
 
 # --- Database Function ---
-def populate_assets_database(assets_to_insert):
+def populate_assets_database(db_password, assets_to_insert):
     con = None
     try:
-        con = sqlite3.connect(DB_FILE)
-        cur = con.cursor()
+        con, cur = get_db_connection(DB_FILE, db_password)
         print(f"\nAttempting to insert/update {len(assets_to_insert)} assets into the database...")
         cur.executemany("""
             INSERT INTO assets (company_account_number, datto_uid, hostname, friendly_name, device_type, operating_system, status, date_added)
@@ -98,9 +115,13 @@ if __name__ == "__main__":
     print(" Datto RMM Data Syncer")
     print("==========================================")
     if not os.path.exists(DB_FILE):
-        sys.exit(f"Error: Database file '{DB_FILE}' not found. Please run the new init_db.py script first.")
+        sys.exit(f"Error: Database file '{DB_FILE}' not found. Please run init_db.py script first.")
 
-    endpoint, api_key, secret_key = read_datto_creds()
+    DB_MASTER_PASSWORD = os.environ.get('DB_MASTER_PASSWORD')
+    if not DB_MASTER_PASSWORD:
+        sys.exit("Error: The DB_MASTER_PASSWORD environment variable must be set.")
+
+    endpoint, api_key, secret_key = get_datto_creds_from_db(DB_MASTER_PASSWORD)
     token = get_datto_access_token(endpoint, api_key, secret_key)
     if not token: sys.exit("\n❌ Failed to obtain access token.")
 
@@ -141,7 +162,7 @@ if __name__ == "__main__":
                 ))
 
     if assets_to_insert:
-        populate_assets_database(assets_to_insert)
+        populate_assets_database(DB_MASTER_PASSWORD, assets_to_insert)
     else:
         print("\nNo devices found with linked account numbers. DB not modified.")
 

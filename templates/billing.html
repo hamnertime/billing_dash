@@ -15,12 +15,23 @@
         tr:nth-child(even) { background-color: #f8f9fa; }
         tr:hover { background-color: #e2e6ea; }
         .nav-link { display: block; text-align: center; margin-bottom: 30px; font-size: 1.1em; }
+        .flash-message { padding: 15px; margin-bottom: 20px; border-radius: 5px; border: 1px solid transparent; }
+        .flash-success { background-color: #d4edda; color: #155724; border-color: #c3e6cb; }
+        .flash-error { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Client Billing Overview</h1>
-        <a href="/settings" class="nav-link">Go to Billing Settings & Sync →</a>
+        <a href="{{ url_for('billing_settings') }}" class="nav-link">Go to Billing Settings & Sync →</a>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash-message flash-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
 
         <table class="client-table">
             <thead>
@@ -37,7 +48,7 @@
                 {% if clients %}
                     {% for client in clients %}
                     <tr>
-                        <td><strong>{{ client['name'] }}</strong></td>
+                        <td><strong><a href="{{ url_for('client_settings', account_number=client.account_number) }}">{{ client.name }}</a></strong></td>
                         <td>{{ client['billing_plan'] }}</td>
                         <td>{{ client['workstation_count'] }}</td>
                         <td>{{ client['server_count'] }}</td>

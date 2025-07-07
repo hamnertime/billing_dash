@@ -6,28 +6,47 @@ import sys
 import time
 import random
 
+try:
+    from sqlcipher3 import dbapi2 as sqlite3
+except ImportError:
+    print("Error: sqlcipher3-wheels is not installed. Please install it using: pip install sqlcipher3-wheels", file=sys.stderr)
+    sys.exit(1)
+
 # --- Configuration ---
-TOKEN_FILE = "./token.txt"
+DB_FILE = "brainhair.db"
 FRESHSERVICE_DOMAIN = "integotecllc.freshservice.com"
 BASE_URL = f"https://{FRESHSERVICE_DOMAIN}"
-
-# --- THE FIX IS HERE ---
-# The correct API field name, confirmed from your debug output.
 ACCOUNT_NUMBER_FIELD = "account_number"
-
 COMPANIES_PER_PAGE = 100
 MAX_RETRIES = 3
 RETRY_DELAY = 5 # seconds
 
-def read_api_key(file_path):
-    """Reads the API key from the specified file."""
-    try:
-        with open(file_path, 'r') as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        print(f"Error: Token file '{file_path}' not found.", file=sys.stderr)
-        sys.exit(1)
+# --- Utility Functions ---
+def get_db_connection(db_path, password):
+    """Establishes a connection to the encrypted database."""
+    if not password:
+        raise ValueError("A database password is required.")
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+    cur.execute(f"PRAGMA key = '{password}';")
+    return con
 
+def get_freshservice_api_key(db_password):
+    """Reads the Freshservice API key from the encrypted database."""
+    try:
+        con = get_db_connection(DB_FILE, db_password)
+        cur = con.cursor()
+        cur.execute("SELECT api_key FROM api_keys WHERE service = 'freshservice'")
+        creds = cur.fetchone()
+        con.close()
+        if not creds:
+            raise ValueError("Freshservice credentials not found in the database.")
+        return creds[0]
+    except sqlite3.Error as e:
+        sys.exit(f"Database error while fetching credentials: {e}. Is the password correct?")
+
+
+# --- API Functions ---
 def get_all_companies(base_url, headers):
     """Fetches all companies (departments) from the Freshservice API."""
     all_companies = []
@@ -83,7 +102,11 @@ if __name__ == "__main__":
     print(" Freshservice Account Number Setter")
     print("==========================================")
 
-    API_KEY = read_api_key(TOKEN_FILE)
+    DB_MASTER_PASSWORD = os.environ.get('DB_MASTER_PASSWORD')
+    if not DB_MASTER_PASSWORD:
+        sys.exit("Error: The DB_MASTER_PASSWORD environment variable must be set.")
+
+    API_KEY = get_freshservice_api_key(DB_MASTER_PASSWORD)
     auth_str = f"{API_KEY}:X"
     encoded_auth = base64.b64encode(auth_str.encode()).decode()
     headers = {
